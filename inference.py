@@ -13,13 +13,23 @@ from models import build_pretrained_models, AudioDiffusion
 from transformers import AutoProcessor, ClapModel
 import torchaudio
 from tango import Tango
-
+import numpy as np
+import pydub
 class dotdict(dict):
     """dot.notation access to dictionary attributes"""
     __getattr__ = dict.get
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
     
+def write(f, sr, x, normalized=False):
+    """numpy array to MP3"""
+    channels = 2 if (x.ndim == 2 and x.shape[1] == 2) else 1
+    if normalized:  # normalized array - each item should be a float in [-1, 1)
+        y = np.int16(x * 2 ** 15)
+    else:
+        y = np.int16(x)
+    song = pydub.AudioSegment(y.tobytes(), frame_rate=sr, sample_width=2, channels=channels)
+    song.export(f, format="mp3", bitrate="320k")
 def chunks(lst, n):
     """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
@@ -128,11 +138,12 @@ def main():
         
     text_prompts = [json.loads(line)[args.text_key] for line in open(args.test_file).readlines()]
     text_prompts = [prefix + inp for inp in text_prompts]
+    output_paths = [json.loads(line)['location'] for line in open(args.test_file).readlines()]
     
     # Generate #
     num_steps, guidance, batch_size, num_samples = args.num_steps, args.guidance, args.batch_size, args.num_samples
     all_outputs = []
-        
+    sf.default_subtype('WAV')
     for k in tqdm(range(0, len(text_prompts), batch_size)):
         text = text_prompts[k: k+batch_size]
         
@@ -141,65 +152,66 @@ def main():
             mel = vae.decode_first_stage(latents)
             wave = vae.decode_to_waveform(mel)
             all_outputs += [item for item in wave]
+            write(output_paths[k], sr=16000, x=np.array([item for item in wave]))
             
     # Save #
-    exp_id = str(int(time.time()))
-    if not os.path.exists("outputs"):
-        os.makedirs("outputs")
+    # exp_id = str(int(time.time()))
+    # if not os.path.exists("outputs"):
+    #     os.makedirs("outputs")
     
-    if num_samples == 1:
-        output_dir = "outputs/{}_{}_steps_{}_guidance_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance)
-        os.makedirs(output_dir, exist_ok=True)
-        for j, wav in enumerate(all_outputs):
-            sf.write("{}/output_{}.wav".format(output_dir, j), wav, samplerate=16000)
+    # if num_samples == 1:
+    #     output_dir = "outputs/{}_{}_steps_{}_guidance_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance)
+    #     os.makedirs(output_dir, exist_ok=True)
+    #     for j, wav in enumerate(all_outputs):
+    #         sf.write("{}/output_{}.wav".format(output_dir, j), wav, samplerate=16000)
 
-        result = evaluator.main(output_dir, args.test_references)
-        result["Steps"] = num_steps
-        result["Guidance Scale"] = guidance
-        result["Test Instances"] = len(text_prompts)
-        wandb.log(result)
+    #     result = evaluator.main(output_dir, args.test_references)
+    #     result["Steps"] = num_steps
+    #     result["Guidance Scale"] = guidance
+    #     result["Test Instances"] = len(text_prompts)
+    #     wandb.log(result)
         
-        result["scheduler_config"] = dict(scheduler.config)
-        result["args"] = dict(vars(args))
-        result["output_dir"] = output_dir
+    #     result["scheduler_config"] = dict(scheduler.config)
+    #     result["args"] = dict(vars(args))
+    #     result["output_dir"] = output_dir
 
-        with open("outputs/summary.jsonl", "a") as f:
-            f.write(json.dumps(result) + "\n\n")
+    #     with open("outputs/summary.jsonl", "a") as f:
+    #         f.write(json.dumps(result) + "\n\n")
             
-    else:
-        for i in range(num_samples):
-            output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
-            os.makedirs(output_dir, exist_ok=True)
+    # else:
+    #     for i in range(num_samples):
+    #         output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
+    #         os.makedirs(output_dir, exist_ok=True)
         
-        groups = list(chunks(all_outputs, num_samples))
-        for k in tqdm(range(len(groups))):
-            wavs_for_text = groups[k]
-            rank = audio_text_matching(wavs_for_text, text_prompts[k])
-            ranked_wavs_for_text = [wavs_for_text[r] for r in rank]
+    #     groups = list(chunks(all_outputs, num_samples))
+    #     for k in tqdm(range(len(groups))):
+    #         wavs_for_text = groups[k]
+    #         rank = audio_text_matching(wavs_for_text, text_prompts[k])
+    #         ranked_wavs_for_text = [wavs_for_text[r] for r in rank]
             
-            for i, wav in enumerate(ranked_wavs_for_text):
-                output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
-                sf.write("{}/output_{}.wav".format(output_dir, k), wav, samplerate=16000)
+    #         for i, wav in enumerate(ranked_wavs_for_text):
+    #             output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
+    #             sf.write("{}/output_{}.wav".format(output_dir, k), wav, samplerate=16000)
             
-        # Compute results for each rank #
-        for i in range(num_samples):
-            output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
-            result = evaluator.main(output_dir, args.test_references)
-            result["Steps"] = num_steps
-            result["Guidance Scale"] = guidance
-            result["Instances"] = len(text_prompts)
-            result["clap_rank"] = i+1
+    #     # Compute results for each rank #
+    #     for i in range(num_samples):
+    #         output_dir = "outputs/{}_{}_steps_{}_guidance_{}/rank_{}".format(exp_id, "_".join(args.model.split("/")[1:-1]), num_steps, guidance, i+1)
+    #         result = evaluator.main(output_dir, args.test_references)
+    #         result["Steps"] = num_steps
+    #         result["Guidance Scale"] = guidance
+    #         result["Instances"] = len(text_prompts)
+    #         result["clap_rank"] = i+1
             
-            wb_result = copy.deepcopy(result)
-            wb_result = {"{}_rank{}".format(k, i+1): v for k, v in wb_result.items()}
-            wandb.log(wb_result)
+    #         wb_result = copy.deepcopy(result)
+    #         wb_result = {"{}_rank{}".format(k, i+1): v for k, v in wb_result.items()}
+    #         wandb.log(wb_result)
             
-            result["scheduler_config"] = dict(scheduler.config)
-            result["args"] = dict(vars(args))
-            result["output_dir"] = output_dir
+    #         result["scheduler_config"] = dict(scheduler.config)
+    #         result["args"] = dict(vars(args))
+    #         result["output_dir"] = output_dir
 
-            with open("outputs/summary.jsonl", "a") as f:
-                f.write(json.dumps(result) + "\n\n")
+    #         with open("outputs/summary.jsonl", "a") as f:
+    #             f.write(json.dumps(result) + "\n\n")
         
 if __name__ == "__main__":
     main()

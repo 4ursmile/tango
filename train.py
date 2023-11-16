@@ -230,6 +230,8 @@ class Text2AudioDataset(Dataset):
     
     
 def main():
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA is required to run this code.")
     args = parse_args()
     accelerator_log_kwargs = {}
 
@@ -434,7 +436,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
 
             with accelerator.accumulate(model):
-                device = model.device
+                device = 'cuda'
                 text, audios, _ = batch
                 target_length = int(duration * 102.4)
 
@@ -481,7 +483,7 @@ def main():
         eval_progress_bar = tqdm(range(len(eval_dataloader)), disable=not accelerator.is_local_main_process)
         for step, batch in enumerate(eval_dataloader):
             with accelerator.accumulate(model) and torch.no_grad():
-                device = model.device
+                device = 'cuda'
                 text, audios, _ = batch
                 target_length = int(duration * 102.4)
 

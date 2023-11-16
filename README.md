@@ -13,6 +13,11 @@
 
 📣 We are excited to share that Oracle Cloud has sponsored the project Tango.
 
+## This is small version of Tango.
+> with around 400M parameters (fit with 16GB VRAM GPU)
+> require CUDA to run.
+> download pretrained model on ZaloAI Challenge 2023 dataset [here](https://drive.google.com/file/d/1-8Q4Q4Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z3Z/view?usp=sharing)
+
 ## Tango Model Family
 
 | Model Name                 | Model Path                                       |
